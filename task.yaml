@@ -58,7 +58,7 @@ tasks:
   - id: T04
     title: fetch stage
     depends_on: [T03]
-    status: pending
+    status: done
     deliverables:
       - internal/ytdlp: yt-dlp + ffmpeg wrappers (exec.Command arg lists, context timeouts)
       - internal/transcript: caption parsing (manual en → auto en), normalization,
