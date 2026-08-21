@@ -1,0 +1,4 @@
+# Normalize line endings; keep shell scripts LF-only so they work on any OS.
+* text=auto
+*.sh text eol=lf
+*.mq5 text

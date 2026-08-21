@@ -1,0 +1,21 @@
+# golangci-lint v2 configuration.
+# Docs: https://golangci-lint.run/docs/configuration/file/
+# Install the runner with: ./bash/setup.sh
+version: "2"
+
+linters:
+  # "standard" = govet, staticcheck, errcheck, unused, ineffassign, ...
+  default: standard
+  enable:
+    - gosec # security-focused static analysis (SQLi, weak crypto, file perms, ...)
+  exclusions:
+    rules:
+      # Tests may legitimately use weak random / fixture files.
+      - path: _test\.go
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

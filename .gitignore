@@ -1,0 +1,45 @@
+# --- Go build artifacts ---
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+
+# --- Test / coverage output ---
+coverage.out
+coverage.html
+bin/
+dist/
+
+# --- Go workspace & vendoring ---
+go.work
+go.work.sum
+vendor/
+
+# --- Env & secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Editor / IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+
+# --- Pipeline run artifacts (transcripts, models output — local only) ---
+runs/
+
+# --- Experiment artifacts (local only) ---
+experiments/

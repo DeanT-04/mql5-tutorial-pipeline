@@ -1,0 +1,27 @@
+# pipeline.yaml — default configuration for mql5-tutorial-pipeline.
+# Flags override values here; built-in defaults sit below both.
+# Schema is documented in spec.md §5; parser is internal/cfg (stdlib only).
+
+models:
+  primary: qwen2.5-coder:3b-instruct
+  fast: qwen2.5-coder:1.5b
+
+ollama:
+  url: http://localhost:11434
+  num_ctx: 4096
+  keep_alive: 30m
+
+segment:
+  max_tokens: 350
+  max_seconds: 45
+  pause_gap: 1.5s
+
+extract:
+  workers: 2
+  retries: 2
+
+verify:
+  min_confidence: 0.6
+
+paths:
+  runs_dir: runs

@@ -1,0 +1,167 @@
+# task.yaml — mql5-tutorial-pipeline implementation plan
+# Ordered, dependency-aware. Each task is independently verifiable.
+# status: pending | in_progress | done | cancelled
+# Run `./bash/dev.sh` after every task; a task is done only when it is green.
+
+meta:
+  project: mql5-tutorial-pipeline
+  spec: spec.md
+  design: design.md
+  rules:
+    - stdlib only, latest Go
+    - table-driven tests, -race clean (plain-test fallback without cgo)
+    - exec.Command argument lists only for external binaries
+    - bounded reads everywhere
+    - model code isolated behind internal/ollama
+    - run ./bash/dev.sh after every change
+
+tasks:
+  - id: T01
+    title: Scaffold repository
+    depends_on: []
+    status: done
+    deliverables:
+      - go.mod (latest Go)
+      - .gitignore (runs/, bin/)
+      - .gitattributes (*.sh forced LF)
+      - .golangci.yml (v2: standard + gosec, formatters gofmt+goimports)
+      - AGENTS.md
+      - bash/setup.sh, bash/dev.sh, bash/git-push.sh (port from sibling repo)
+      - pipeline.yaml (defaults per spec §5)
+      - cmd/ stubs: fetch, segment, extract, assemble, verify, pipeline
+      - internal/cfg: config loading with built-in defaults < pipeline.yaml < flags
+    acceptance:
+      - ./bash/dev.sh green on empty packages
+      - go run ./cmd/pipeline --help exits 2 with usage on stderr
+
+  - id: T02
+    title: Config package
+    depends_on: [T01]
+    status: done
+    deliverables:
+      - internal/cfg: minimal purpose-built YAML reader for the flat schema in spec §5
+        (zero third-party deps), flag merging, validation of ranges
+    acceptance:
+      - table-driven tests: defaults, file overrides, flag overrides, malformed file → error
+      - no third-party imports in go.mod
+
+  - id: T03
+    title: Run store + manifests
+    depends_on: [T01]
+    status: pending
+    deliverables:
+      - internal/runstore: runs/<video-id>/ layout, manifest.json read/write,
+        SHA-256 input hashing, HasStage/SkipStage resume logic, atomic writes (tmp+rename)
+    acceptance:
+      - tests: create/resume/skip, hash change forces re-run, concurrent-safe writes not required but atomic rename tested
+
+  - id: T04
+    title: fetch stage
+    depends_on: [T03]
+    status: pending
+    deliverables:
+      - internal/ytdlp: yt-dlp + ffmpeg wrappers (exec.Command arg lists, context timeouts)
+      - internal/transcript: caption parsing (manual en → auto en), normalization,
+        faster-whisper invocation (--transcript-mode whisper / audio fallback),
+        transcript.json writer
+    acceptance:
+      - unit tests with fake executables (scripted stubs on PATH) — no network in tests
+      - transcript.json schema per spec §4.1; sorted, non-overlapping validated
+      - missing yt-dlp → exit 1 actionable stderr
+
+  - id: T05
+    title: segment stage
+    depends_on: [T04]
+    status: pending
+    deliverables:
+      - internal/segment: pause-gap >1.5s split, cue-phrase split (cues.go, config-extensible),
+        token/time caps, deterministic c0001… IDs, chunks.json writer
+    acceptance:
+      - golden test: fixture transcript → byte-identical chunks.json across runs
+      - edge cases: empty transcript, single line, cue mid-line (must NOT split)
+
+  - id: T06
+    title: Ollama client
+    depends_on: [T01]
+    status: pending
+    deliverables:
+      - internal/ollama: net/http client — chat endpoint, JSON-schema format param,
+        temperature/num_ctx/num_predict options, keep-alive, timeouts,
+        bounded response reads, typed errors (timeout/schema/refused)
+    acceptance:
+      - httptest-based tests: success, invalid JSON, HTTP 500, timeout, connection refused
+      - zero model required to run tests
+
+  - id: T07
+    title: Prompts + event types
+    depends_on: [T06]
+    status: pending
+    deliverables:
+      - internal/prompts: triage + deep-extract templates; byte-stable shared prefix
+        (test asserts prefix equality across calls); few-shot examples included
+      - internal/events: Event struct, op enum (create|append|replace|property|include),
+        Validate() (replace⇒anchor required), JSONL reader/writer, failed-chunk records
+    acceptance:
+      - test: prompt prefix byte-identical for two different chunks
+      - test: all invalid events rejected by Validate
+
+  - id: T08
+    title: extract stage (two passes)
+    depends_on: [T07]
+    status: pending
+    deliverables:
+      - Pass A triage over chunks.json → triage.jsonl (num_predict ≤16, fail-open on low confidence)
+      - Pass B deep extract on positives → events.jsonl (schema-forced, 2 retries,
+        failed chunks recorded and skipped)
+      - worker pool (default 2), resumable per chunk via manifest
+    acceptance:
+      - full pass exercised against scripted fake Ollama server (httptest) incl. retry path
+      - runs green with no Ollama installed
+
+  - id: T09
+    title: assemble stage
+    depends_on: [T07]
+    status: pending
+    deliverables:
+      - internal/assemble: deterministic replay in (chunk_id, seq) order;
+        create/append/replace(anchor unique-match)/property/include semantics per spec §4.4;
+        assembly-report.json
+    acceptance:
+      - golden test: fixture events → out/*.mq5 byte-equal to golden files
+      - conflict cases (missing anchor, duplicate anchor, double create) reported, never guessed
+
+  - id: T10
+    title: verify stage
+    depends_on: [T09]
+    status: pending
+    deliverables:
+      - internal/verify: static checks (brace/paren balance, #property strict,
+        entry points per program type, placeholder/truncation artifacts, metadata extraction)
+      - optional --llm-check single-call diff verdict
+      - report.json with weighted confidence; exit 1 below min_confidence
+    acceptance:
+      - table-driven tests per check incl. pass/fail fixtures
+      - llm-check path tested against fake server; off by default
+
+  - id: T11
+    title: pipeline orchestrator
+    depends_on: [T04, T05, T08, T09, T10]
+    status: pending
+    deliverables:
+      - cmd/pipeline: stage sequencing, resume via manifests, --force/--fast/--transcript-mode wiring,
+        progress to stderr, final summary to stdout
+    acceptance:
+      - end-to-end mini-pipeline test on bundled fixture + fake server, no network/Ollama
+      - resume test: delete events.jsonl → extract re-runs, fetch/segment skipped
+
+  - id: T12
+    title: Real-world validation
+    depends_on: [T11]
+    status: pending
+    deliverables:
+      - ./bash/setup.sh executed (Ollama install, model pull, faster-whisper pip install)
+      - one real captioned MQL5 tutorial video ≤20 min through the full pipeline
+      - fidelity notes vs. actual video code recorded in experiments/
+    acceptance:
+      - completes unattended within time budget on target hardware
+      - report.json confidence ≥ threshold; manual spot-check of output code
