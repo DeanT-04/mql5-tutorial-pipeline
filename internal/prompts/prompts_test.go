@@ -14,7 +14,7 @@ func TestSystemPromptsByteStable(t *testing.T) {
 	if !strings.HasPrefix(a, "Classify this chunk.") || !strings.HasPrefix(b, "Classify this chunk.") {
 		t.Error("triage user messages lost their shared prefix")
 	}
-	c, d := DeepUser("c0001", "x"), DeepUser("c0009", "totally different")
+	c, d := DeepUser("c0001", "x", ""), DeepUser("c0009", "totally different", "")
 	if !strings.HasPrefix(c, "Extract code events from this chunk.") ||
 		!strings.HasPrefix(d, "Extract code events from this chunk.") {
 		t.Error("deep user messages lost their shared prefix")
@@ -58,8 +58,18 @@ func TestUserMessagesContainChunk(t *testing.T) {
 	if !strings.Contains(got, "c0017") || !strings.Contains(got, `the "chunk" text`) {
 		t.Errorf("TriageUser() = %q", got)
 	}
-	got = DeepUser("c0042", "body")
+	got = DeepUser("c0042", "body", "")
 	if !strings.Contains(got, "c0042") || !strings.Contains(got, "body") {
 		t.Errorf("DeepUser() = %q", got)
+	}
+	if strings.Contains(got, "Previous chunk") {
+		t.Error("DeepUser with empty context must not mention context")
+	}
+	withCtx := DeepUser("c0042", "body", "earlier words")
+	if !strings.Contains(withCtx, "earlier words") || !strings.Contains(withCtx, "context only") {
+		t.Errorf("DeepUser with context = %q", withCtx)
+	}
+	if !strings.HasPrefix(withCtx, "Extract code events from this chunk.\n\n") {
+		t.Error("DeepUser lost its stable head prefix")
 	}
 }

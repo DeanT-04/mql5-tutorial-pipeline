@@ -97,8 +97,8 @@ func TestRunConflictsReported(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Join([]string{
-		`{"chunk_id":"c0001","seq":1,"op":"append","file":"Ghost.mq5","code":"int x;"}`,
-		`{"chunk_id":"c0002","seq":1,"op":"create","file":"A.mq5","code":"int x;"}`,
+		`{"chunk_id":"c0001","seq":1,"op":"create","file":"A.mq5","code":"int x;"}`,
+		`{"chunk_id":"c0002","seq":1,"op":"replace","file":"A.mq5","anchor":"int gone;","code":"int y;"}`,
 	}, "\n")
 	if err := os.WriteFile(filepath.Join(runDir, "events.jsonl"), []byte(lines), 0o600); err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestRunConflictsReported(t *testing.T) {
 	if !strings.Contains(stdout.String(), "1 skipped") {
 		t.Errorf("stdout = %q", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "conflict c0001") {
+	if !strings.Contains(stderr.String(), "conflict c0002") {
 		t.Errorf("stderr = %q", stderr.String())
 	}
 }

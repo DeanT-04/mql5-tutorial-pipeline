@@ -40,13 +40,10 @@ func TestInputOrderIrrelevant(t *testing.T) {
 	}
 }
 
-func TestAppendWithoutCreateSkipped(t *testing.T) {
+func TestAppendToUnknownFileImplicitlyCreates(t *testing.T) {
 	res := Run([]events.Event{ev("c0001", 1, events.OpAppend, "Ghost.mq5", "int x;")})
-	if res.Skipped != 1 || len(res.Files) != 0 {
+	if res.Skipped != 0 || res.Files["Ghost.mq5"] != "int x;\n" {
 		t.Fatalf("skipped=%d files=%v", res.Skipped, res.Files)
-	}
-	if !strings.Contains(res.Records[0].Detail, "does not exist") {
-		t.Errorf("detail = %q", res.Records[0].Detail)
 	}
 }
 

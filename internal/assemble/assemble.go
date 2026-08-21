@@ -66,11 +66,13 @@ func apply(files map[string]string, e events.Event) error {
 		files[e.File] = terminate(e.Code)
 
 	case events.OpAppend:
-		cur, ok := files[e.File]
-		if !ok {
-			return fmt.Errorf("append: %s does not exist", e.File)
+		if _, ok := files[e.File]; !ok {
+			// Implicit create: extraction often misses the explicit
+			// "create file" moment. An empty container is not invented code;
+			// every subsequent line is still dictated.
+			files[e.File] = ""
 		}
-		files[e.File] = join(cur, e.Code)
+		files[e.File] = join(files[e.File], e.Code)
 
 	case events.OpReplace:
 		cur, ok := files[e.File]
@@ -89,7 +91,7 @@ func apply(files map[string]string, e events.Event) error {
 	case events.OpProperty, events.OpInclude:
 		cur, ok := files[e.File]
 		if !ok {
-			return fmt.Errorf("%s: %s does not exist", e.Op, e.File)
+			cur = "" // implicit create, same rationale as append
 		}
 		line := strings.TrimRight(e.Code, "\n")
 		if strings.Contains(cur, line+"\n") || strings.HasSuffix(cur, line) && !strings.Contains(line, "\n") {

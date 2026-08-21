@@ -5,12 +5,16 @@
 // which is appended after the stable prefix.
 package prompts
 
+import (
+	"strings"
+)
+
 // System is the byte-stable triage-pass system prompt.
 const System = `You classify transcript chunks from MQL5 programming tutorials.
 
-You will receive one transcript chunk. Decide whether it contains a concrete code action: the instructor writing, editing, adding, replacing, deleting, or dictating actual MQL5 code, or creating/configuring a source file.
+You will receive one transcript chunk. Decide whether it contains a concrete code action: the instructor writing, editing, adding, replacing, deleting, or dictating actual MQL5 code, or creating/configuring a source file. Mentions like "we start with an include statement", "let's add a variable", "we use SymbolInfoDouble" ARE code actions, even without literal code words.
 
-Pure talk does NOT count: introductions, motivation, explanations of already-written code, marketing, outro, questions to viewers.
+Pure talk does NOT count: introductions, motivation, explanations of already-written code with no new element, marketing, outro, questions to viewers.
 
 Answer with exactly one JSON object, no prose:
 {"chunk_id": "<the chunk id you were given>", "has_code_action": true|false, "confidence": <0.0-1.0>}
@@ -23,40 +27,48 @@ Chunk c0001: "Welcome back everyone, today we start a brand new series on buildi
 Chunk c0002: "So let's add our first input, type input double LotSize equals 0.10, semicolon."
 {"chunk_id":"c0002","has_code_action":true,"confidence":0.9}
 
-Chunk c0003: "This function is called by the terminal every time a new tick arrives."
-{"chunk_id":"c0003","has_code_action":false,"confidence":0.85}`
+Chunk c0003: "We start with an include statement, we want to include the file Trade.mqh, so now we can create an instance called trade."
+{"chunk_id":"c0003","has_code_action":true,"confidence":0.9}
+
+Chunk c0004: "This function is called by the terminal every time a new tick arrives."
+{"chunk_id":"c0004","has_code_action":false,"confidence":0.85}`
 
 // DeepSystem is the byte-stable deep-extraction system prompt.
 const DeepSystem = `You extract exact code-editing events from transcript chunks of MQL5 programming tutorials.
 
-You will receive one transcript chunk that has already been flagged as containing a code action. Convert what the instructor writes or dictates into one or more structured events.
+You receive one transcript chunk that has already been flagged as containing a code action. Convert everything the instructor writes or dictates into structured events.
 
 Event object fields:
 - chunk_id: echo the id you were given
 - seq: 1-based order within this chunk
 - op: one of "create", "append", "replace", "property", "include"
-  - create: a new file is started; code is its full initial content
-  - append: lines are added to the end of the named file
-  - replace: an existing snippet is replaced; anchor is the exact current snippet being replaced
+  - create: the target file does not exist yet; code is its initial content
+  - append: lines added to the end of the named file
+  - replace: an existing snippet is replaced; anchor is the exact snippet being replaced
   - property: a #property directive line; code contains the full directive
   - include: an #include directive line; code contains the full directive
-- file: target file name only (no directories), always ending in .mq5
+- file: bare file name only (no directories), always ending in .mq5
 - anchor: for replace, the exact existing snippet; otherwise empty
-- code: the exact MQL5 code, preserving spelling, casing, numbers, punctuation
+- code: the exact MQL5 code
 
-Rules:
-- Transcribe code EXACTLY as spoken/shown. Never fix, reformat, or invent code.
-- If the instructor dictates a change to an earlier snippet, emit replace with the anchor copied verbatim from what they say is being replaced.
-- Emit no events if the chunk turns out to contain no concrete code action.
-- Output exactly one JSON object, no prose: {"events":[ ... ]}
+Transcription rules (critical):
+1. Transcribe EXACTLY what is dictated or shown. Preserve spelling, casing, numbers, punctuation, and parameter order.
+2. NEVER invent code that was not spoken/shown. Never invent include paths: use exactly the file name the instructor says (e.g. they say "Trade.mqh" -> #include <Trade\Trade.mqh> is WRONG, #include <Trade.mqh> is RIGHT).
+3. Choose types from usage: a variable assigned quoted values like "buy"/"sell" is a string; price arrays are double arrays.
+4. One chunk usually yields MULTIPLE lines. Emit one event per logical edit; put several dictated lines in one event's code separated by newlines when they belong together.
+5. Standard boilerplate the instructor references (OnTick function) belongs in the file: emit it as append with the function skeleton when they say to write it.
+6. If the chunk continues a thought from the previous chunk (given as context), complete the element using both parts; attribute the event to THIS chunk.
+7. Emit no events only if there is truly no concrete code action.
+
+Output exactly one JSON object, no prose: {"events":[ ... ]}
 
 Examples:
 
 Chunk c0007: "Create a new file called MyEA.mq5, and we begin with the property strict directive at the top."
 {"events":[{"chunk_id":"c0007","seq":1,"op":"create","file":"MyEA.mq5","anchor":"","code":"#property strict"}]}
 
-Chunk c0011: "Below OnInit let's add our input, input double LotSize equals zero point one oh, with a semicolon."
-{"events":[{"chunk_id":"c0011","seq":1,"op":"append","file":"MyEA.mq5","anchor":"","code":"input double LotSize = 0.10;"}]}
+Chunk c0011: "At the very top we include Trade dot mqh, and below it we create an instance called trade."
+{"events":[{"chunk_id":"c0011","seq":1,"op":"append","file":"MyEA.mq5","anchor":"","code":"#include <Trade\\Trade.mqh>\nCTrade trade;"}]}
 
 Chunk c0015: "Now find the line with the lot size input and change zero point one oh to zero point five."
 {"events":[{"chunk_id":"c0015","seq":1,"op":"replace","file":"MyEA.mq5","anchor":"input double LotSize = 0.10;","code":"input double LotSize = 0.50;"}]}`
@@ -99,15 +111,31 @@ func DeepSchema() any {
 	}
 }
 
+const (
+	triageHead = "Classify this chunk.\n\n"
+	deepHead   = "Extract code events from this chunk.\n\n"
+)
+
 // TriageUser builds the user message for one chunk. Only the tail varies;
 // everything before the chunk body stays byte-identical across calls.
 func TriageUser(chunkID, text string) string {
-	const head = "Classify this chunk.\n\nChunk "
-	return head + chunkID + ": " + text
+	return triageHead + "Chunk " + chunkID + ": " + text
 }
 
-// DeepUser builds the user message for one chunk in the deep pass.
-func DeepUser(chunkID, text string) string {
-	const head = "Extract code events from this chunk.\n\nChunk "
-	return head + chunkID + ": " + text
+// DeepUser builds the user message for one chunk in the deep pass. context is
+// the tail of the previous chunk (may be empty); it aids continuity but the
+// model is instructed to attribute extracted code to this chunk.
+func DeepUser(chunkID, text, context string) string {
+	var b strings.Builder
+	b.WriteString(deepHead)
+	if context != "" {
+		b.WriteString("Previous chunk ends with (context only): ...")
+		b.WriteString(context)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Chunk ")
+	b.WriteString(chunkID)
+	b.WriteString(": ")
+	b.WriteString(text)
+	return b.String()
 }

@@ -23,12 +23,16 @@ type Client interface {
 
 // Config controls the extraction passes.
 type Config struct {
-	Model     string
-	Workers   int
-	Retries   int
-	NumCtx    int
-	KeepAlive string
+	Model      string
+	Workers    int
+	Retries    int
+	NumCtx     int
+	NumPredict int
+	KeepAlive  string
 }
+
+// DefaultNumPredict is the deep-pass generation cap.
+const DefaultNumPredict = 512
 
 // TriageRecord is one Pass-A verdict.
 type TriageRecord struct {
@@ -63,6 +67,9 @@ func Run(ctx context.Context, chunks []segment.Chunk, cfg Config, cli Client) (*
 	}
 	if cli == nil {
 		return nil, fmt.Errorf("extract: nil client")
+	}
+	if cfg.NumPredict == 0 {
+		cfg.NumPredict = DefaultNumPredict
 	}
 
 	verdicts, passed := triage(ctx, chunks, cfg, cli)
@@ -174,11 +181,11 @@ func deepExtract(ctx context.Context, passed []string, chunks []segment.Chunk, c
 				Model: cfg.Model,
 				Messages: []ollama.Message{
 					{Role: "system", Content: prompts.DeepSystem},
-					{Role: "user", Content: prompts.DeepUser(id, text[id])},
+					{Role: "user", Content: prompts.DeepUser(id, text[id], contextBefore(passed, i, text))},
 				},
 				Format:    prompts.DeepSchema(),
 				KeepAlive: cfg.KeepAlive,
-				Options:   ollama.Options{Temperature: 0, NumCtx: cfg.NumCtx, NumPredict: 512},
+				Options:   ollama.Options{Temperature: 0, NumCtx: cfg.NumCtx, NumPredict: cfg.NumPredict},
 			}
 
 			o := outcome{id: id}
@@ -216,4 +223,17 @@ func deepExtract(ctx context.Context, passed []string, chunks []segment.Chunk, c
 		evts = append(evts, o.evts...)
 	}
 	return evts, fails
+}
+
+// contextBefore returns the tail of the chunk preceding passed[i] in
+// transcript order, for rolling continuity. Returns "" for the first chunk.
+func contextBefore(passed []string, i int, text map[string]string) string {
+	if i == 0 {
+		return ""
+	}
+	prev := text[passed[i-1]]
+	if len(prev) > 200 {
+		return prev[len(prev)-200:]
+	}
+	return prev
 }

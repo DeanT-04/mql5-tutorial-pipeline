@@ -96,6 +96,25 @@ func TestRunTokenCapSplits(t *testing.T) {
 	}
 }
 
+func TestRunCapSplitPrefersSentenceBoundary(t *testing.T) {
+	cfg := Config{MaxTokens: 15, MaxSeconds: 1000, PauseGap: time.Hour, Cues: nil}
+	lines := []transcript.Line{
+		line(0, 1, "words without any stop"),        // 6 tokens
+		line(1.1, 2, "more words ending right."),    // 7 tokens -> group would exceed on next
+		line(2.1, 3, "tail content after boundary"), // 8 tokens -> forces cap split
+	}
+	got := Run(lines, cfg)
+	if len(got) != 2 {
+		t.Fatalf("chunks = %d (%+v), want 2", len(got), got)
+	}
+	if !strings.HasSuffix(got[0].Text, ".") {
+		t.Errorf("first chunk should end at the sentence boundary, got %q", got[0].Text)
+	}
+	if got[1].Text != "tail content after boundary" {
+		t.Errorf("second chunk should carry only the overflow line, got %q", got[1].Text)
+	}
+}
+
 func TestRunTimeCapSplits(t *testing.T) {
 	cfg := Config{MaxTokens: 10000, MaxSeconds: 10, PauseGap: time.Hour, Cues: nil}
 	lines := []transcript.Line{

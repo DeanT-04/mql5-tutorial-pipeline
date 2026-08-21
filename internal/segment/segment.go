@@ -58,6 +58,8 @@ func DefaultConfig() Config {
 }
 
 // Run segments lines into deterministically-ID'd chunks (c0001, c0002, ...).
+// When a token/time cap forces a split, the split backtracks to the most
+// recent sentence boundary so chunks never cut a dictated thought in half.
 func Run(lines []transcript.Line, c Config) []Chunk {
 	if len(lines) == 0 {
 		return nil
@@ -66,11 +68,8 @@ func Run(lines []transcript.Line, c Config) []Chunk {
 	maxGap := c.PauseGap.Seconds()
 
 	var chunks []Chunk
-	var group []transcript.Line
-	var groupTokens int
-	var prevEnd float64
 
-	flush := func() {
+	emit := func(group []transcript.Line) {
 		if len(group) == 0 {
 			return
 		}
@@ -86,32 +85,61 @@ func Run(lines []transcript.Line, c Config) []Chunk {
 			End:   group[len(group)-1].End,
 			Text:  b.String(),
 		})
-		group = nil
-		groupTokens = 0
 	}
 
-	for i, l := range lines {
-		gap := 0.0
-		if i > 0 {
-			gap = l.Start - prevEnd
+	group := make([]transcript.Line, 0, len(lines))
+	tokens := func(g []transcript.Line) int {
+		n := 0
+		for _, l := range g {
+			n += estimateTokens(l.Text)
 		}
-		startNew := len(group) > 0 && (gap > maxGap ||
-			startsWithCue(l.Text, cues) ||
-			groupTokens+estimateTokens(l.Text) > c.MaxTokens ||
-			l.End-group[0].Start > float64(c.MaxSeconds))
-		if startNew {
-			flush()
+		return n
+	}
+
+	for _, l := range lines {
+		if len(group) > 0 {
+			last := group[len(group)-1]
+			gap := l.Start - last.End
+			switch {
+			case gap > maxGap || startsWithCue(l.Text, cues):
+				emit(group)
+				group = group[:0]
+			default:
+				overCap := tokens(group)+estimateTokens(l.Text) > c.MaxTokens ||
+					l.End-group[0].Start > float64(c.MaxSeconds)
+				if overCap {
+					head, tail := splitAtSentence(group)
+					if head != nil {
+						emit(head)
+						group = append(group[:0], tail...)
+					} else {
+						emit(group)
+						group = group[:0]
+					}
+				}
+			}
 		}
 		group = append(group, l)
-		prevEnd = l.End
-		groupTokens += estimateTokens(l.Text)
 	}
-	flush()
+	emit(group)
 
 	for i := range chunks {
 		chunks[i].ID = fmt.Sprintf("c%04d", i+1)
 	}
 	return chunks
+}
+
+// splitAtSentence splits a group at its last sentence-ending caption line,
+// returning the head (to emit) and tail (to carry over). Returns nil if no
+// usable boundary exists.
+func splitAtSentence(group []transcript.Line) ([]transcript.Line, []transcript.Line) {
+	for i := len(group) - 1; i > 0; i-- {
+		t := strings.TrimRight(strings.TrimSpace(group[i].Text), "\"'’)] ")
+		if strings.HasSuffix(t, ".") || strings.HasSuffix(t, "!") || strings.HasSuffix(t, "?") {
+			return group[:i+1], group[i+1:]
+		}
+	}
+	return nil, nil
 }
 
 func normalizedCues(cues []string) []string {
