@@ -53,6 +53,12 @@ type Failed struct {
 	Error   string `json:"error"`
 }
 
+// WithAnchor returns a copy of e with the replace anchor set.
+func (e Event) WithAnchor(anchor string) Event {
+	e.Anchor = anchor
+	return e
+}
+
 // Validate checks an event against the spec rules. replace requires a
 // non-empty anchor; file must be a bare .mq5 name; chunk_id and code are
 // mandatory; seq >= 1.

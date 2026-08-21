@@ -121,7 +121,7 @@ tasks:
   - id: T09
     title: assemble stage
     depends_on: [T07]
-    status: pending
+    status: done
     deliverables:
       - internal/assemble: deterministic replay in (chunk_id, seq) order;
         create/append/replace(anchor unique-match)/property/include semantics per spec §4.4;
