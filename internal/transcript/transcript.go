@@ -5,7 +5,6 @@ package transcript
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 )
@@ -104,24 +103,13 @@ func Marshal(lines []Line) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-// Load reads and parses a transcript.json file, refusing files over MaxFileBytes.
-func Load(path string) ([]Line, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, fmt.Errorf("transcript: stat %s: %w", path, err)
-	}
-	if info.Size() > MaxFileBytes {
-		return nil, fmt.Errorf("transcript: %s exceeds %d bytes", path, MaxFileBytes)
-	}
-	f, err := os.Open(path) // #nosec G304 -- path comes from the run directory by design
-	if err != nil {
-		return nil, fmt.Errorf("transcript: open %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-	dec := json.NewDecoder(f)
+// Unmarshal decodes transcript.json content (as produced by Marshal) into
+// lines. Callers are responsible for capping the input size before reading
+// it from disk (see runstore.Run.ReadFileCapped).
+func Unmarshal(data []byte) ([]Line, error) {
 	var lines []Line
-	if err := dec.Decode(&lines); err != nil {
-		return nil, fmt.Errorf("transcript: parse %s: %w", path, err)
+	if err := json.Unmarshal(data, &lines); err != nil {
+		return nil, fmt.Errorf("transcript: parse: %w", err)
 	}
 	return lines, nil
 }

@@ -81,8 +81,8 @@ func Segment(r *runstore.Run, cfg segment.Config) (int, error) {
 	if cached(r, runstore.StageSegment, inputHash, runstore.ChunksJSON) {
 		return -1, nil
 	}
-	var lines []transcript.Line
-	if err := json.Unmarshal(data, &lines); err != nil {
+	lines, err := transcript.Unmarshal(data)
+	if err != nil {
 		return 0, fmt.Errorf("segment: parse %s: %w", r.Path(runstore.TranscriptJSON), err)
 	}
 	chunks := segment.Run(lines, cfg)
@@ -119,8 +119,8 @@ func Extract(ctx context.Context, r *runstore.Run, cfg extract.Config,
 	if cached(r, runstore.StageExtract, inputHash, runstore.EventsJSONL) {
 		return nil, nil
 	}
-	var chunks []segment.Chunk
-	if err := json.Unmarshal(chunkData, &chunks); err != nil {
+	chunks, err := segment.Unmarshal(chunkData)
+	if err != nil {
 		return nil, fmt.Errorf("extract: parse %s: %w", r.Path(runstore.ChunksJSON), err)
 	}
 	res, runErr := extract.Run(ctx, chunks, cfg, ollama.New(ollamaURL))

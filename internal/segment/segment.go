@@ -6,7 +6,6 @@ package segment
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -152,16 +151,13 @@ func Marshal(chunks []Chunk) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-// Load reads and parses a chunks.json file.
-func Load(path string) ([]Chunk, error) {
-	f, err := os.Open(path) // #nosec G304 -- path comes from the run directory by design
-	if err != nil {
-		return nil, fmt.Errorf("segment: open %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
+// Unmarshal decodes chunks.json content (as produced by Marshal) into chunks.
+// Callers are responsible for capping the input size before reading it from
+// disk (see runstore.Run.ReadFileCapped).
+func Unmarshal(data []byte) ([]Chunk, error) {
 	var chunks []Chunk
-	if err := json.NewDecoder(f).Decode(&chunks); err != nil {
-		return nil, fmt.Errorf("segment: parse %s: %w", path, err)
+	if err := json.Unmarshal(data, &chunks); err != nil {
+		return nil, fmt.Errorf("segment: parse: %w", err)
 	}
 	return chunks, nil
 }

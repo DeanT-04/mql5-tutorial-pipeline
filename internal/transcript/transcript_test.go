@@ -2,8 +2,6 @@ package transcript
 
 import (
 	"math"
-	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -93,34 +91,23 @@ func TestNormalizeClampNegativeDuration(t *testing.T) {
 	}
 }
 
-func TestMarshalLoadRoundTrip(t *testing.T) {
+func TestMarshalUnmarshalRoundTrip(t *testing.T) {
 	lines := []Line{{Start: 1.5, End: 2.5, Text: "hello world"}}
 	data, err := Marshal(lines)
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
 	}
-	path := filepath.Join(t.TempDir(), "transcript.json")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := Load(path)
+	got, err := Unmarshal(data)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("Unmarshal() error = %v", err)
 	}
 	if !reflect.DeepEqual(got, lines) {
 		t.Errorf("round trip = %+v, want %+v", got, lines)
 	}
 }
 
-func TestLoadErrors(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "bad.json")
-	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Load(path); err == nil {
-		t.Error("Load(corrupt) error = nil, want error")
-	}
-	if _, err := Load(filepath.Join(t.TempDir(), "missing.json")); err == nil {
-		t.Error("Load(missing) error = nil, want error")
+func TestUnmarshalError(t *testing.T) {
+	if _, err := Unmarshal([]byte("{")); err == nil {
+		t.Error("Unmarshal(corrupt) error = nil, want error")
 	}
 }
