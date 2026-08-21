@@ -11,7 +11,7 @@ import (
 	"os"
 
 	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/runstore"
-	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/transcript"
+	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/stages"
 	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/ytdlp"
 )
 
@@ -64,20 +64,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, newFetche
 	if err != nil {
 		return fail(stderr, err)
 	}
-	inputHash, err := runstore.HashValue(struct {
-		URL  string `json:"url"`
-		Mode string `json:"mode"`
-	}{rawURL, string(mode)})
-	if err != nil {
-		return fail(stderr, err)
-	}
-	if r.UpToDate(runstore.StageFetch, inputHash) {
-		_, _ = fmt.Fprintf(stdout, "fetch: up to date (%s)\n", r.Path(runstore.TranscriptJSON))
-		return 0
-	}
-
-	fetcher := newFetcher()
-	res, err := fetcher.Fetch(ctx, rawURL, r.Dir(), mode)
+	n, err := stages.Fetch(ctx, r, rawURL, mode, newFetcher)
 	if err != nil {
 		if errors.Is(err, ytdlp.ErrNoCaptions) {
 			_, _ = fmt.Fprintln(stderr, "fetch: no english captions; retry with --transcript-mode whisper (slow)")
@@ -85,19 +72,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, newFetche
 		}
 		return fail(stderr, err)
 	}
-	data, err := transcript.Marshal(res.Lines)
-	if err != nil {
-		return fail(stderr, err)
+	if n == -1 {
+		_, _ = fmt.Fprintf(stdout, "fetch: up to date (%s)\n", r.Path(runstore.TranscriptJSON))
+		return 0
 	}
-	if err := runstore.WriteFileAtomic(r.Path(runstore.TranscriptJSON), data); err != nil {
-		return fail(stderr, err)
-	}
-	title, _ := fetcher.Title(ctx, rawURL)
-	r.SetMeta(rawURL, title)
-	if err := r.MarkDone(runstore.StageFetch, inputHash); err != nil {
-		return fail(stderr, err)
-	}
-	_, _ = fmt.Fprintf(stdout, "fetch: %d lines via %s -> %s\n", len(res.Lines), res.Source, r.Path(runstore.TranscriptJSON))
+	_, _ = fmt.Fprintf(stdout, "fetch: %d lines -> %s\n", n, r.Path(runstore.TranscriptJSON))
 	return 0
 }
 

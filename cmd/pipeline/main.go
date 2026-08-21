@@ -1,6 +1,10 @@
+// Command pipeline turns one YouTube MQL5 tutorial video into .mq5 code by
+// running fetch → segment → extract → assemble → verify with content-hash
+// resume at every stage.
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -8,6 +12,11 @@ import (
 	"os"
 
 	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/cfg"
+	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/extract"
+	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/runstore"
+	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/segment"
+	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/stages"
+	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/ytdlp"
 )
 
 const usage = `pipeline — YouTube MQL5 tutorial URL to .mq5 code, end to end
@@ -24,10 +33,10 @@ Flags:
 `
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stderr))
+	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, ytdlp.New))
 }
 
-func run(args []string, stderr io.Writer) int {
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, newFetcher func() *ytdlp.Fetcher) int {
 	fs := flag.NewFlagSet("pipeline", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", "pipeline.yaml", "config file path")
@@ -53,41 +62,181 @@ func run(args []string, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "pipeline: invalid --transcript-mode %q\n", *transcriptMode)
 		return 2
 	}
-
 	conf, err := loadConfig(*configPath, *workers)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "pipeline: %v\n", err)
 		return 2
 	}
+	rawURL := fs.Arg(0)
+	videoID, err := ytdlp.ExtractVideoID(rawURL)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "pipeline: %v\n", err)
+		return 2
+	}
+	model := conf.Models.Primary
+	if *fast {
+		model = conf.Models.Fast
+	}
+	mode := ytdlp.Mode(*transcriptMode)
 
-	_ = conf
-	_ = *fast
-	_ = *force
+	r, err := runstore.New(conf.Paths.RunsDir, videoID)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	if *force {
+		if err := clearCaches(r); err != nil {
+			return fail(stderr, err)
+		}
+	}
 
-	_, _ = fmt.Fprintf(stderr, "pipeline: not implemented yet (url=%s)\n", fs.Arg(0))
-	return 1
+	step := func(name string, fn func() error) error {
+		_, _ = fmt.Fprintf(stderr, "==> %s\n", name)
+		return fn()
+	}
+
+	if err := step("fetch", func() error {
+		n, err := stages.Fetch(ctx, r, rawURL, mode, newFetcher)
+		if n == -1 {
+			logf(stderr, "fetch: skipped (cached)")
+			return nil
+		}
+		if err == nil {
+			logf(stderr, "fetch: %d lines", n)
+		}
+		return err
+	}); err != nil {
+		if errors.Is(err, ytdlp.ErrNoCaptions) {
+			_, _ = fmt.Fprintln(stderr, "pipeline: no english captions; retry with --transcript-mode whisper (slow)")
+			return 1
+		}
+		return fail(stderr, err)
+	}
+
+	if err := step("segment", func() error {
+		n, err := stages.Segment(r, segment.Config{
+			MaxTokens:  conf.Segment.MaxTokens,
+			MaxSeconds: conf.Segment.MaxSeconds,
+			PauseGap:   conf.Segment.PauseGap,
+			Cues:       segment.DefaultCues,
+		})
+		if n == -1 {
+			logf(stderr, "segment: skipped (cached)")
+			return nil
+		}
+		if err == nil {
+			logf(stderr, "segment: %d chunks", n)
+		}
+		return err
+	}); err != nil {
+		return fail(stderr, err)
+	}
+
+	var extractRes *extract.Result
+	if err := step("extract", func() error {
+		res, runErr := stages.Extract(ctx, r, extract.Config{
+			Model:     model,
+			Workers:   conf.Extract.Workers,
+			Retries:   conf.Extract.Retries,
+			NumCtx:    conf.Ollama.NumCtx,
+			KeepAlive: conf.Ollama.KeepAlive.String(),
+		}, conf.Ollama.URL)
+		extractRes = res
+		if res == nil {
+			logf(stderr, "extract: skipped (cached)")
+			return nil
+		}
+		logf(stderr, "extract: %d events (%d failed chunks)", len(res.Events), len(res.Failed))
+		return runErr
+	}); err != nil && !errors.Is(err, extract.ErrAllFailed) {
+		return fail(stderr, err)
+	}
+
+	var outDir string
+	if err := step("assemble", func() error {
+		res, dir, err := stages.Assemble(r)
+		outDir = dir
+		if res == nil {
+			logf(stderr, "assemble: skipped (cached)")
+			return nil
+		}
+		for _, rec := range res.Records {
+			if rec.Status == "skipped" {
+				logf(stderr, "assemble: conflict %s %s seq %d on %s: %s",
+					rec.ChunkID, rec.Op, rec.Seq, rec.File, rec.Detail)
+			}
+		}
+		logf(stderr, "assemble: %d ops applied, %d skipped", res.Applied, res.Skipped)
+		return err
+	}); err != nil {
+		return fail(stderr, err)
+	}
+
+	report, err := stages.Verify(ctx, r, stages.VerifyOptions{
+		LLM:       false,
+		Model:     conf.Models.Primary,
+		BaseURL:   conf.Ollama.URL,
+		KeepAlive: conf.Ollama.KeepAlive.String(),
+		NumCtx:    conf.Ollama.NumCtx,
+	})
+	if report == nil {
+		if report, err = stages.LoadReport(r); err != nil {
+			return fail(stderr, err)
+		}
+		logf(stderr, "verify: skipped (cached)")
+	} else if err != nil {
+		logf(stderr, "verify: warning: %v", err)
+	}
+	for _, f := range report.Findings {
+		logf(stderr, "verify: [%s] %s %s: %s", f.Severity, f.File, f.Check, f.Detail)
+	}
+
+	failed := 0
+	if extractRes != nil {
+		failed = len(extractRes.Failed)
+	}
+
+	_, _ = fmt.Fprintf(stdout, "\nvideo:   %s\noutput:  %s\nreport:  %s\nconfidence: %.2f\nfailed chunks: %d\n",
+		videoID, outDir, r.Path(runstore.ReportJSON), report.Confidence, failed)
+
+	if report.Confidence < conf.Verify.MinConfidence {
+		_, _ = fmt.Fprintf(stderr, "pipeline: confidence %.2f below minimum %.2f\n",
+			report.Confidence, conf.Verify.MinConfidence)
+		return 1
+	}
+	return 0
 }
 
-// loadConfig loads the config file; a missing default pipeline.yaml falls back
-// to built-in defaults, but an explicitly named missing file is a usage error.
+func logf(stderr io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(stderr, format+"\n", args...)
+}
+
+// clearCaches drops every stage record so all stages re-run under --force.
+func clearCaches(r *runstore.Run) error {
+	return r.ResetStages()
+}
+
+// loadConfig loads the config; a missing default pipeline.yaml falls back to
+// built-in defaults, an explicitly named missing file is an error.
 func loadConfig(path string, workers int) (*cfg.Config, error) {
-	_, statErr := os.Stat(path)
-	if statErr != nil && path != "pipeline.yaml" {
-		return nil, fmt.Errorf("open %s: %w", path, statErr)
-	}
-	if statErr != nil {
-		conf := cfg.Default()
-		if workers > 0 {
-			conf.Apply(cfg.Overrides{Workers: &workers})
+	var conf *cfg.Config
+	if _, err := os.Stat(path); err != nil {
+		if path != "pipeline.yaml" {
+			return nil, fmt.Errorf("open %s: %w", path, err)
 		}
-		return conf, nil
-	}
-	conf, err := cfg.Load(path)
-	if err != nil {
-		return nil, err
+		conf = cfg.Default()
+	} else {
+		var err error
+		if conf, err = cfg.Load(path); err != nil {
+			return nil, err
+		}
 	}
 	if workers > 0 {
 		conf.Apply(cfg.Overrides{Workers: &workers})
 	}
 	return conf, nil
+}
+
+func fail(stderr io.Writer, err error) int {
+	_, _ = fmt.Fprintf(stderr, "pipeline: %v\n", err)
+	return 1
 }

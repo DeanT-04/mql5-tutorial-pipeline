@@ -3,9 +3,7 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -14,11 +12,9 @@ import (
 	"path/filepath"
 
 	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/cfg"
-	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/events"
 	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/extract"
-	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/ollama"
 	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/runstore"
-	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/segment"
+	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/stages"
 )
 
 const usage = `extract — triage chunks and extract code events via Ollama
@@ -52,11 +48,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	conf, err := loadConfig(*configPath)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "extract: %v\n", err)
-		return 2
+		return fail(stderr, err)
 	}
 	if *workers > 0 {
 		conf.Apply(cfg.Overrides{Workers: workers})
+	}
+	model := conf.Models.Primary
+	if *fast {
+		model = conf.Models.Fast
 	}
 
 	parent, id := filepath.Dir(*runDir), filepath.Base(*runDir)
@@ -64,69 +63,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, err)
 	}
-	chunkData, err := r.ReadFileCapped(runstore.ChunksJSON, 64<<20)
-	if err != nil {
-		return fail(stderr, err)
-	}
-	model := conf.Models.Primary
-	if *fast {
-		model = conf.Models.Fast
-	}
-	inputHash, err := runstore.HashValue(struct {
-		Chunks string `json:"chunks"`
-		Model  string `json:"model"`
-	}{string(chunkData), model})
-	if err != nil {
-		return fail(stderr, err)
-	}
-	if r.UpToDate(runstore.StageExtract, inputHash) {
-		_, _ = fmt.Fprintf(stdout, "extract: up to date (%s)\n", r.Path(runstore.EventsJSONL))
-		return 0
-	}
-
-	var chunks []segment.Chunk
-	if err := json.Unmarshal(chunkData, &chunks); err != nil {
-		return fail(stderr, fmt.Errorf("parse %s: %w", r.Path(runstore.ChunksJSON), err))
-	}
-
-	res, err := extract.Run(ctx, chunks, extract.Config{
+	res, runErr := stages.Extract(ctx, r, extract.Config{
 		Model:     model,
 		Workers:   conf.Extract.Workers,
 		Retries:   conf.Extract.Retries,
 		NumCtx:    conf.Ollama.NumCtx,
 		KeepAlive: conf.Ollama.KeepAlive.String(),
-	}, ollama.New(conf.Ollama.URL))
-	soft := errors.Is(err, extract.ErrAllFailed)
-	if err != nil && !soft {
-		return fail(stderr, err)
+	}, conf.Ollama.URL)
+	if res == nil && runErr != nil {
+		return fail(stderr, runErr)
 	}
-
-	var triageBuf, eventsBuf bytes.Buffer
-	for _, rec := range res.Triage {
-		if err := events.AppendJSONL(&triageBuf, rec); err != nil {
-			return fail(stderr, err)
-		}
+	if res == nil {
+		_, _ = fmt.Fprintf(stdout, "extract: up to date (%s)\n", r.Path(runstore.EventsJSONL))
+		return 0
 	}
-	for _, ev := range res.Events {
-		if err := events.AppendJSONL(&eventsBuf, ev); err != nil {
-			return fail(stderr, err)
-		}
-	}
-	for _, f := range res.Failed {
-		if err := events.AppendJSONL(&eventsBuf, f); err != nil {
-			return fail(stderr, err)
-		}
-	}
-	if err := runstore.WriteFileAtomic(r.Path(runstore.TriageJSONL), triageBuf.Bytes()); err != nil {
-		return fail(stderr, err)
-	}
-	if err := runstore.WriteFileAtomic(r.Path(runstore.EventsJSONL), eventsBuf.Bytes()); err != nil {
-		return fail(stderr, err)
-	}
-	if err := r.MarkDone(runstore.StageExtract, inputHash); err != nil {
-		return fail(stderr, err)
-	}
-
 	positive := 0
 	for _, rec := range res.Triage {
 		if rec.HasCodeAction {
@@ -134,8 +84,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	_, _ = fmt.Fprintf(stdout, "extract: %d events, %d/%d chunks positive, %d failed -> %s\n",
-		len(res.Events), positive, len(chunks), len(res.Failed), r.Path(runstore.EventsJSONL))
-	if soft {
+		len(res.Events), positive, len(res.Triage), len(res.Failed), r.Path(runstore.EventsJSONL))
+	if errors.Is(runErr, extract.ErrAllFailed) {
 		_, _ = fmt.Fprintln(stderr, "extract: every chunk failed extraction")
 		return 1
 	}

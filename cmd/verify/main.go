@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -13,9 +12,8 @@ import (
 	"path/filepath"
 
 	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/cfg"
-	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/events"
 	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/runstore"
-	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/verify"
+	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/stages"
 )
 
 const usage = `verify — run static (and optional LLM) checks on assembled files
@@ -48,8 +46,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	conf, err := loadConfig(*configPath)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "verify: %v\n", err)
-		return 2
+		return fail(stderr, err)
 	}
 
 	parent, id := filepath.Dir(*runDir), filepath.Base(*runDir)
@@ -57,8 +54,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, err)
 	}
-	outDir := filepath.Join(r.Dir(), "out")
-	files, err := readOutDir(outDir)
+	files, err := stages.ReadOutDir(filepath.Join(r.Dir(), "out"))
 	if err != nil {
 		return fail(stderr, err)
 	}
@@ -67,85 +63,35 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	inputHash, err := runstore.HashValue(struct {
-		Files map[string]string `json:"files"`
-		LLM   bool              `json:"llm"`
-	}{files, *llmCheck})
-	if err != nil {
+	rep, err := stages.Verify(ctx, r, stages.VerifyOptions{
+		LLM:        *llmCheck,
+		Model:      conf.Models.Primary,
+		BaseURL:    conf.Ollama.URL,
+		KeepAlive:  conf.Ollama.KeepAlive.String(),
+		NumCtx:     conf.Ollama.NumCtx,
+		MinConfide: conf.Verify.MinConfidence,
+	})
+	if err != nil && rep == nil {
 		return fail(stderr, err)
 	}
-	if r.UpToDate(runstore.StageVerify, inputHash) {
-		_, _ = fmt.Fprintf(stdout, "verify: up to date (%s)\n", r.Path(runstore.ReportJSON))
+	if rep == nil {
+		_, _ = fmt.Fprintf(stdout, "verify: up to date (%s)\n", r.Path("report.json"))
 		return 0
 	}
-
-	rep := verify.Run(files)
-	if *llmCheck {
-		data, err := r.ReadFileCapped(runstore.EventsJSONL, 256<<20)
-		if err != nil {
-			return fail(stderr, fmt.Errorf("load events for --llm-check: %w", err))
-		}
-		var evts []events.Event
-		if err := events.Reader(bytes.NewReader(data), func(rec any) error {
-			if e, ok := rec.(events.Event); ok {
-				evts = append(evts, e)
-			}
-			return nil
-		}); err != nil {
-			return fail(stderr, err)
-		}
-		model := conf.Models.Primary
-		if err := verify.RunLLM(ctx, rep, files, evts, model, conf.Ollama.URL,
-			conf.Ollama.KeepAlive.String(), conf.Ollama.NumCtx); err != nil {
-			_, _ = fmt.Fprintf(stderr, "verify: warning: %v\n", err)
-		}
-	}
-
-	repData, err := verify.Marshal(rep)
-	if err != nil {
-		return fail(stderr, err)
-	}
-	if err := runstore.WriteFileAtomic(r.Path(runstore.ReportJSON), repData); err != nil {
-		return fail(stderr, err)
-	}
-	if err := r.MarkDone(runstore.StageVerify, inputHash); err != nil {
-		return fail(stderr, err)
-	}
-
 	for _, f := range rep.Findings {
 		_, _ = fmt.Fprintf(stderr, "verify: [%s] %s %s: %s\n", f.Severity, f.File, f.Check, f.Detail)
 	}
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "verify: warning: %v\n", err)
+	}
 	_, _ = fmt.Fprintf(stdout, "verify: confidence %.2f (%d findings) -> %s\n",
-		rep.Confidence, len(rep.Findings), r.Path(runstore.ReportJSON))
+		rep.Confidence, len(rep.Findings), r.Path("report.json"))
 	if rep.Confidence < conf.Verify.MinConfidence {
 		_, _ = fmt.Fprintf(stderr, "verify: confidence %.2f below minimum %.2f\n",
 			rep.Confidence, conf.Verify.MinConfidence)
 		return 1
 	}
 	return 0
-}
-
-// readOutDir loads every *.mq5 file under dir keyed by bare name.
-func readOutDir(dir string) (map[string]string, error) {
-	entries, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", dir, err)
-	}
-	files := map[string]string{}
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".mq5" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name())) // #nosec G304 -- fixed join of controlled dir
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", e.Name(), err)
-		}
-		files[e.Name()] = string(data)
-	}
-	return files, nil
 }
 
 // loadConfig loads the config; a missing default pipeline.yaml falls back to

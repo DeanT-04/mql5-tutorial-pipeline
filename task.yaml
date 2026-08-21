@@ -146,7 +146,7 @@ tasks:
   - id: T11
     title: pipeline orchestrator
     depends_on: [T04, T05, T08, T09, T10]
-    status: pending
+    status: done
     deliverables:
       - cmd/pipeline: stage sequencing, resume via manifests, --force/--fast/--transcript-mode wiring,
         progress to stderr, final summary to stdout

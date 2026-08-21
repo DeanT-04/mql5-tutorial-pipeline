@@ -160,6 +160,12 @@ func (r *Run) MarkDone(stage, inputHash string) error {
 	return r.save()
 }
 
+// ResetStages clears all stage records so every stage re-runs (--force).
+func (r *Run) ResetStages() error {
+	r.m.Stages = map[string]StageRecord{}
+	return r.save()
+}
+
 // save writes the manifest atomically: temp file in the same directory, then rename.
 func (r *Run) save() error {
 	data, err := json.MarshalIndent(&r.m, "", "  ")

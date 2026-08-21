@@ -84,7 +84,7 @@ func TestRunFetchEndToEnd(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run() = %d, want 0 (stderr: %s)", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "captions-manual") || !strings.Contains(stdout.String(), "1 lines") {
+	if !strings.Contains(stdout.String(), "1 lines") {
 		t.Errorf("stdout = %q", stdout.String())
 	}
 

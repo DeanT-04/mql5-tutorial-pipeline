@@ -3,7 +3,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -14,7 +13,7 @@ import (
 	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/cfg"
 	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/runstore"
 	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/segment"
-	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/transcript"
+	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/stages"
 )
 
 const usage = `segment — merge a run's transcript into code-step chunks
@@ -55,37 +54,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, err)
 	}
-	data, err := r.ReadFileCapped(runstore.TranscriptJSON, transcript.MaxFileBytes)
-	if err != nil {
-		return fail(stderr, err)
-	}
-	inputHash := runstore.HashBytes(data)
-	if r.UpToDate(runstore.StageSegment, inputHash) {
-		_, _ = fmt.Fprintf(stdout, "segment: up to date (%s)\n", r.Path(runstore.ChunksJSON))
-		return 0
-	}
-
-	var lines []transcript.Line
-	if err := json.Unmarshal(data, &lines); err != nil {
-		return fail(stderr, fmt.Errorf("parse %s: %w", r.Path(runstore.TranscriptJSON), err))
-	}
-	chunks := segment.Run(lines, segment.Config{
+	n, err := stages.Segment(r, segment.Config{
 		MaxTokens:  conf.Segment.MaxTokens,
 		MaxSeconds: conf.Segment.MaxSeconds,
 		PauseGap:   conf.Segment.PauseGap,
 		Cues:       segment.DefaultCues,
 	})
-	out, err := segment.Marshal(chunks)
 	if err != nil {
 		return fail(stderr, err)
 	}
-	if err := runstore.WriteFileAtomic(r.Path(runstore.ChunksJSON), out); err != nil {
-		return fail(stderr, err)
+	if n == -1 {
+		_, _ = fmt.Fprintf(stdout, "segment: up to date (%s)\n", r.Path(runstore.ChunksJSON))
+		return 0
 	}
-	if err := r.MarkDone(runstore.StageSegment, inputHash); err != nil {
-		return fail(stderr, err)
-	}
-	_, _ = fmt.Fprintf(stdout, "segment: %d chunks -> %s\n", len(chunks), r.Path(runstore.ChunksJSON))
+	_, _ = fmt.Fprintf(stdout, "segment: %d chunks -> %s\n", n, r.Path(runstore.ChunksJSON))
 	return 0
 }
 
