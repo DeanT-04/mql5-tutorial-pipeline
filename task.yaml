@@ -108,7 +108,7 @@ tasks:
   - id: T08
     title: extract stage (two passes)
     depends_on: [T07]
-    status: pending
+    status: done
     deliverables:
       - Pass A triage over chunks.json → triage.jsonl (num_predict ≤16, fail-open on low confidence)
       - Pass B deep extract on positives → events.jsonl (schema-forced, 2 retries,
