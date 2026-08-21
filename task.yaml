@@ -72,7 +72,7 @@ tasks:
   - id: T05
     title: segment stage
     depends_on: [T04]
-    status: pending
+    status: done
     deliverables:
       - internal/segment: pause-gap >1.5s split, cue-phrase split (cues.go, config-extensible),
         token/time caps, deterministic c0001… IDs, chunks.json writer

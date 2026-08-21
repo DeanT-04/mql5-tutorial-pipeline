@@ -1,0 +1,178 @@
+package segment
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/DeanT-04/mql5-tutorial-pipeline/internal/transcript"
+)
+
+func line(start, end float64, text string) transcript.Line {
+	return transcript.Line{Start: start, End: end, Text: text}
+}
+
+func ids(chunks []Chunk) []string {
+	out := make([]string, len(chunks))
+	for i, c := range chunks {
+		out[i] = c.ID
+	}
+	return out
+}
+
+func TestRunEmpty(t *testing.T) {
+	if got := Run(nil, DefaultConfig()); got != nil {
+		t.Errorf("Run(nil) = %+v, want nil", got)
+	}
+	if got := Run([]transcript.Line{}, DefaultConfig()); got != nil {
+		t.Errorf("Run(empty) = %+v, want nil", got)
+	}
+}
+
+func TestRunSingleLine(t *testing.T) {
+	got := Run([]transcript.Line{line(0, 2, "one line only")}, DefaultConfig())
+	want := []Chunk{{ID: "c0001", Start: 0, End: 2, Text: "one line only"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Run() = %+v, want %+v", got, want)
+	}
+}
+
+func TestRunPauseGapSplits(t *testing.T) {
+	cfg := DefaultConfig() // 1.5s gap
+	lines := []transcript.Line{
+		line(0, 1, "before the pause"),
+		line(3, 4, "after a long silence"), // 2s gap
+		line(4.5, 5, "short gap here"),     // 0.5s gap
+	}
+	got := Run(lines, cfg)
+	wantIDs := []string{"c0001", "c0002"}
+	if !reflect.DeepEqual(ids(got), wantIDs) {
+		t.Errorf("ids = %v, want %v (chunks: %+v)", ids(got), wantIDs, got)
+	}
+	if got[1].Start != 3 {
+		t.Errorf("second chunk start = %f, want 3", got[1].Start)
+	}
+}
+
+func TestRunCueSplitsOnlyAtLineStart(t *testing.T) {
+	cfg := DefaultConfig()
+	lines := []transcript.Line{
+		line(0, 1, "and in the middle we say next line should not split"),
+		line(2, 3, "Next line starts with the cue"),
+	}
+	got := Run(lines, cfg)
+	if len(got) != 2 {
+		t.Fatalf("chunks = %d (%+v), want 2: cue must split at line start only", len(got), got)
+	}
+	if got[1].Text != "Next line starts with the cue" {
+		t.Errorf("second chunk text = %q", got[1].Text)
+	}
+}
+
+func TestRunCueCaseInsensitiveAndPunctuationTolerant(t *testing.T) {
+	cfg := DefaultConfig()
+	lines := []transcript.Line{
+		line(0, 1, "first chunk content"),
+		line(2, 3, "\"Let's add an input variable\""),
+	}
+	got := Run(lines, cfg)
+	if len(got) != 2 {
+		t.Fatalf("chunks = %d (%+v), want 2", len(got), got)
+	}
+}
+
+func TestRunTokenCapSplits(t *testing.T) {
+	cfg := Config{MaxTokens: 10, MaxSeconds: 100, PauseGap: time.Hour, Cues: nil}
+	long := strings.Repeat("word ", 6) // ~30 chars => 8 tokens
+	lines := []transcript.Line{
+		line(0, 1, long),
+		line(1.5, 2.5, long), // 8+8 > 10 => split despite no gap/cue
+	}
+	got := Run(lines, cfg)
+	if len(got) != 2 {
+		t.Errorf("chunks = %d (%+v), want 2 via token cap", len(got), got)
+	}
+}
+
+func TestRunTimeCapSplits(t *testing.T) {
+	cfg := Config{MaxTokens: 10000, MaxSeconds: 10, PauseGap: time.Hour, Cues: nil}
+	lines := []transcript.Line{
+		line(0, 5, "early speech"),
+		line(6, 12, "late speech"), // span would be 12s > 10s
+	}
+	got := Run(lines, cfg)
+	if len(got) != 2 {
+		t.Errorf("chunks = %d (%+v), want 2 via time cap", len(got), got)
+	}
+}
+
+func TestRunDeterministic(t *testing.T) {
+	lines := []transcript.Line{
+		line(0, 1, "let's add a variable"),
+		line(5, 6, "so now we initialize it"),
+		line(20, 21, "type this exactly"),
+	}
+	a := Run(lines, DefaultConfig())
+	b := Run(lines, DefaultConfig())
+	if !reflect.DeepEqual(a, b) {
+		t.Error("Run() not deterministic")
+	}
+	dataA, err := Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataB, _ := Marshal(b)
+	if string(dataA) != string(dataB) {
+		t.Error("Marshal(Run(...)) not byte-stable across runs")
+	}
+	if !reflect.DeepEqual(ids(a), []string{"c0001", "c0002", "c0003"}) {
+		t.Errorf("ids = %v", ids(a))
+	}
+}
+
+func TestMarshalLoadRoundTrip(t *testing.T) {
+	chunks := []Chunk{{ID: "c0001", Start: 1, End: 2, Text: "hello"}}
+	data, err := Marshal(chunks)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "chunks.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, chunks) {
+		t.Errorf("round trip = %+v, want %+v", got, chunks)
+	}
+}
+
+func TestLoadErrors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Error("Load(corrupt) error = nil, want error")
+	}
+	if _, err := Load(filepath.Join(t.TempDir(), "missing.json")); err == nil {
+		t.Error("Load(missing) error = nil, want error")
+	}
+}
+
+func TestMarshalValidJSON(t *testing.T) {
+	var parsed []Chunk
+	data, err := Marshal([]Chunk{{ID: "c0001"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("Marshal output is not valid JSON: %v", err)
+	}
+}

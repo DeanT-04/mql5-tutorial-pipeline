@@ -10,6 +10,9 @@ import (
 	"strings"
 )
 
+// MaxFileBytes caps any single transcript file read from disk.
+const MaxFileBytes = 64 << 20
+
 // Line is one normalized caption line with second-precision timing.
 type Line struct {
 	Start float64 `json:"start"`
@@ -101,8 +104,15 @@ func Marshal(lines []Line) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-// Load reads and parses a transcript.json file, refusing files over 64 MiB.
+// Load reads and parses a transcript.json file, refusing files over MaxFileBytes.
 func Load(path string) ([]Line, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("transcript: stat %s: %w", path, err)
+	}
+	if info.Size() > MaxFileBytes {
+		return nil, fmt.Errorf("transcript: %s exceeds %d bytes", path, MaxFileBytes)
+	}
 	f, err := os.Open(path) // #nosec G304 -- path comes from the run directory by design
 	if err != nil {
 		return nil, fmt.Errorf("transcript: open %s: %w", path, err)
