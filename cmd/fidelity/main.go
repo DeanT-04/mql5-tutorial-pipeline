@@ -29,7 +29,7 @@ func main() {
 	}
 	worst := fidelity.Result{}
 	for _, m := range matches {
-		out, err := os.ReadFile(m) // #nosec G304 -- paths come from the run's out/ glob
+		out, err := os.ReadFile(m) // #nosec G304,G703 -- paths come from the run's out/ glob
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "fidelity: %v\n", err)
 			os.Exit(1)

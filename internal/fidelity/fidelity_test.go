@@ -22,7 +22,7 @@ func TestStripCommentsAndBlanks(t *testing.T) {
 
 func TestTokens(t *testing.T) {
 	got := Tokens(`if (RSIValue > 70) signal="sell";`)
-	want := []string{"if", "(", "RSIValue", ">", "70", ")", "signal", "=", `"sell"`, ";"}
+	want := []string{"if", "(", "RSIValue", ">", "70", ")", "signal", "=", "\"", "sell", "\"", ";"}
 	if len(got) != len(want) {
 		t.Fatalf("tokens = %q, want %q", got, want)
 	}
