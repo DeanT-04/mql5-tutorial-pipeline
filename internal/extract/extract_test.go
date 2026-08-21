@@ -116,7 +116,7 @@ func TestRunTriageErrorFailsOpen(t *testing.T) {
 			deepSeen.Store(true)
 			return `{"events":[]}`, nil
 		}
-		if call == 0 {
+		if chunkIDFromUser(t, req) == "c0001" {
 			return "", errors.New("server hiccup")
 		}
 		id := chunkIDFromUser(t, req)

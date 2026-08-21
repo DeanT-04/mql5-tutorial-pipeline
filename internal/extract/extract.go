@@ -116,7 +116,7 @@ func triage(ctx context.Context, chunks []segment.Chunk, cfg Config, cli Client)
 				},
 				Format:    prompts.TriageSchema(),
 				KeepAlive: cfg.KeepAlive,
-				Options:   ollama.Options{Temperature: 0, NumCtx: cfg.NumCtx, NumPredict: 16},
+				Options:   ollama.Options{Temperature: 0, NumCtx: cfg.NumCtx, NumPredict: 64},
 			}
 			var reply triReply
 			rec := TriageRecord{ChunkID: c.ID, HasCodeAction: true}

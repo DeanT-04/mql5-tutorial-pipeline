@@ -146,7 +146,7 @@ Output: `report.json` with a weighted confidence score and itemized findings.
 | Fast (`--fast`) | `qwen2.5-coder:1.5b` | Drafts / long videos where speed dominates |
 
 Generation params: `temperature 0`, `num_ctx 4096`, JSON-schema `format` always,
-`num_predict` capped per pass (16 triage / 512 deep). Concurrency: 2 workers
+`num_predict` capped per pass (64 triage / 512 deep). Concurrency: 2 workers
 (`OLLAMA_NUM_PARALLEL=2`) — memory-bound CPU inference gains modestly from overlap.
 
 Model choice is a config value, not a hardcoded fact — benchmark task exists to revisit it.

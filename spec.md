@@ -88,7 +88,9 @@ Chunk IDs deterministic: `c0001`, `c0002`, … Same transcript in ⇒ byte-ident
 
 **Pass A (triage).** Per chunk, JSON-schema-forced output
 `{"chunk_id": string, "has_code_action": bool, "confidence": number}`.
-`num_predict ≤ 16`, temperature 0. Low-confidence positives pass through (fail open).
+`num_predict ≤ 64`, temperature 0. (16 was tested on a real video and truncated
+the JSON reply mid-token — every chunk then fail-opens into the deep pass.)
+Low-confidence positives pass through (fail open).
 
 **Pass B (deep).** Triaged-positive chunks only. Emits events:
 
@@ -108,7 +110,7 @@ Prompt rules (enforced in `internal/prompts`):
   calls of a pass (KV-cache prefix reuse). Chunk text goes last, never interpolated
   into the prefix.
 - All requests use Ollama structured output (`format` = JSON schema), `temperature 0`,
-  `num_ctx 4096`; `num_predict` 512 (deep) / 16 (triage).
+  `num_ctx 4096`; `num_predict` 512 (deep) / 64 (triage).
 
 Ollama client: plain `net/http`, no SDK. Timeouts + bounded response reads.
 Concurrency default 2 workers.

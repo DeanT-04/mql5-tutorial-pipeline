@@ -157,7 +157,13 @@ tasks:
   - id: T12
     title: Real-world validation
     depends_on: [T11]
-    status: pending
+    status: done
+    notes: >
+      Environment fully installed via scoop (ollama 0.32.15, qwen2.5-coder:3b-instruct +
+      :1.5b, faster-whisper). Three real videos run unattended end-to-end within budget;
+      verify gate correctly refuses low-fidelity output. Fidelity on the best-case
+      dictation-style video ~20% (target 95%) — defects and v1.x follow-ups recorded in
+      experiments/fidelity-e2d5eh3Zi9o.md (local only). Triage num_predict fixed 16->64.
     deliverables:
       - ./bash/setup.sh executed (Ollama install, model pull, faster-whisper pip install)
       - one real captioned MQL5 tutorial video ≤20 min through the full pipeline
