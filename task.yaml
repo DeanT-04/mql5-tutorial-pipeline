@@ -48,7 +48,7 @@ tasks:
   - id: T03
     title: Run store + manifests
     depends_on: [T01]
-    status: pending
+    status: done
     deliverables:
       - internal/runstore: runs/<video-id>/ layout, manifest.json read/write,
         SHA-256 input hashing, HasStage/SkipStage resume logic, atomic writes (tmp+rename)
