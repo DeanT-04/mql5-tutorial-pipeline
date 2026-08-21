@@ -30,7 +30,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("segment", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	runDir := fs.String("run", "", "run directory")
-	configPath := fs.String("config", "pipeline.yaml", "config file path")
+	configPath := fs.String("config", cfg.DefaultPath, "config file path")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -43,7 +43,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprint(stderr, usage)
 		return 2
 	}
-	conf, err := loadConfig(*configPath)
+	conf, err := cfg.LoadOrDefault(*configPath)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "segment: %v\n", err)
 		return 2
@@ -69,18 +69,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	_, _ = fmt.Fprintf(stdout, "segment: %d chunks -> %s\n", n, r.Path(runstore.ChunksJSON))
 	return 0
-}
-
-// loadConfig loads the config; a missing default pipeline.yaml falls back to
-// built-in defaults, an explicitly named missing file is an error.
-func loadConfig(path string) (*cfg.Config, error) {
-	if _, err := os.Stat(path); err != nil {
-		if path != "pipeline.yaml" {
-			return nil, fmt.Errorf("open %s: %w", path, err)
-		}
-		return cfg.Default(), nil
-	}
-	return cfg.Load(path)
 }
 
 func fail(stderr io.Writer, err error) int {

@@ -194,6 +194,39 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
+func TestLoadOrDefault(t *testing.T) {
+	t.Run("missing default falls back to built-ins", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		c, err := LoadOrDefault(DefaultPath)
+		if err != nil {
+			t.Fatalf("LoadOrDefault() error = %v, want nil", err)
+		}
+		if *c != *Default() {
+			t.Errorf("config = %+v, want defaults", *c)
+		}
+	})
+	t.Run("existing default file is loaded", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+		content := "extract:\n  workers: 4\n"
+		if err := os.WriteFile(DefaultPath, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c, err := LoadOrDefault(DefaultPath)
+		if err != nil {
+			t.Fatalf("LoadOrDefault() error = %v, want nil", err)
+		}
+		if c.Extract.Workers != 4 || c.Models.Primary != "qwen2.5-coder:3b-instruct" {
+			t.Errorf("workers/primary = %d/%q, want 4/default", c.Extract.Workers, c.Models.Primary)
+		}
+	})
+	t.Run("missing explicit file is an error", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "other.yaml")
+		if _, err := LoadOrDefault(path); err == nil {
+			t.Fatal("LoadOrDefault(missing explicit) error = nil, want error")
+		}
+	})
+}
+
 func TestApplyOverrides(t *testing.T) {
 	c := Default()
 	workers := 5

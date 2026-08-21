@@ -30,7 +30,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	runDir := fs.String("run", "", "run directory")
-	configPath := fs.String("config", "pipeline.yaml", "config file path")
+	configPath := fs.String("config", cfg.DefaultPath, "config file path")
 	llmCheck := fs.Bool("llm-check", false, "additionally compare files against code events via the model")
 
 	if err := fs.Parse(args); err != nil {
@@ -44,7 +44,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprint(stderr, usage)
 		return 2
 	}
-	conf, err := loadConfig(*configPath)
+	conf, err := cfg.LoadOrDefault(*configPath)
 	if err != nil {
 		return fail(stderr, err)
 	}
@@ -64,18 +64,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	rep, err := stages.Verify(ctx, r, stages.VerifyOptions{
-		LLM:        *llmCheck,
-		Model:      conf.Models.Primary,
-		BaseURL:    conf.Ollama.URL,
-		KeepAlive:  conf.Ollama.KeepAlive.String(),
-		NumCtx:     conf.Ollama.NumCtx,
-		MinConfide: conf.Verify.MinConfidence,
+		LLM:       *llmCheck,
+		Model:     conf.Models.Primary,
+		BaseURL:   conf.Ollama.URL,
+		KeepAlive: conf.Ollama.KeepAlive.String(),
+		NumCtx:    conf.Ollama.NumCtx,
 	})
 	if err != nil && rep == nil {
 		return fail(stderr, err)
 	}
 	if rep == nil {
-		_, _ = fmt.Fprintf(stdout, "verify: up to date (%s)\n", r.Path("report.json"))
+		_, _ = fmt.Fprintf(stdout, "verify: up to date (%s)\n", r.Path(runstore.ReportJSON))
 		return 0
 	}
 	for _, f := range rep.Findings {
@@ -85,25 +84,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "verify: warning: %v\n", err)
 	}
 	_, _ = fmt.Fprintf(stdout, "verify: confidence %.2f (%d findings) -> %s\n",
-		rep.Confidence, len(rep.Findings), r.Path("report.json"))
+		rep.Confidence, len(rep.Findings), r.Path(runstore.ReportJSON))
 	if rep.Confidence < conf.Verify.MinConfidence {
 		_, _ = fmt.Fprintf(stderr, "verify: confidence %.2f below minimum %.2f\n",
 			rep.Confidence, conf.Verify.MinConfidence)
 		return 1
 	}
 	return 0
-}
-
-// loadConfig loads the config; a missing default pipeline.yaml falls back to
-// built-in defaults, an explicitly named missing file is an error.
-func loadConfig(path string) (*cfg.Config, error) {
-	if _, err := os.Stat(path); err != nil {
-		if path != "pipeline.yaml" {
-			return nil, fmt.Errorf("open %s: %w", path, err)
-		}
-		return cfg.Default(), nil
-	}
-	return cfg.Load(path)
 }
 
 func fail(stderr io.Writer, err error) int {

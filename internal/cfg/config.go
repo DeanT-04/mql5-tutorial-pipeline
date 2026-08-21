@@ -19,6 +19,9 @@ const (
 	maxFileBytes = 1 << 20
 )
 
+// DefaultPath is the config file name every CLI uses unless overridden.
+const DefaultPath = "pipeline.yaml"
+
 type Models struct {
 	Primary string
 	Fast    string
@@ -92,6 +95,21 @@ func Default() *Config {
 			RunsDir: "runs",
 		},
 	}
+}
+
+// LoadOrDefault loads path, falling back to built-in defaults when path is
+// DefaultPath and the file does not exist. An explicitly named missing file
+// (or an unreadable default) is an error.
+func LoadOrDefault(path string) (*Config, error) {
+	if path == DefaultPath {
+		if _, err := os.Stat(path); err != nil {
+			if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("config: stat %s: %w", path, err)
+			}
+			return Default(), nil
+		}
+	}
+	return Load(path)
 }
 
 // Load reads path ("" means defaults only), merges it over the defaults and

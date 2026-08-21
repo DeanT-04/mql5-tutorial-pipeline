@@ -39,7 +39,7 @@ func main() {
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, newFetcher func() *ytdlp.Fetcher) int {
 	fs := flag.NewFlagSet("pipeline", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	configPath := fs.String("config", "pipeline.yaml", "config file path")
+	configPath := fs.String("config", cfg.DefaultPath, "config file path")
 	transcriptMode := fs.String("transcript-mode", "auto", "auto | captions | whisper")
 	fast := fs.Bool("fast", false, "use the fast model")
 	force := fs.Bool("force", false, "ignore cached stage outputs")
@@ -62,10 +62,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, newFetche
 		_, _ = fmt.Fprintf(stderr, "pipeline: invalid --transcript-mode %q\n", *transcriptMode)
 		return 2
 	}
-	conf, err := loadConfig(*configPath, *workers)
+	conf, err := cfg.LoadOrDefault(*configPath)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "pipeline: %v\n", err)
 		return 2
+	}
+	if *workers > 0 {
+		conf.Apply(cfg.Overrides{Workers: workers})
 	}
 	rawURL := fs.Arg(0)
 	videoID, err := ytdlp.ExtractVideoID(rawURL)
@@ -84,7 +87,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, newFetche
 		return fail(stderr, err)
 	}
 	if *force {
-		if err := clearCaches(r); err != nil {
+		if err := r.ResetStages(); err != nil {
 			return fail(stderr, err)
 		}
 	}
@@ -208,32 +211,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, newFetche
 
 func logf(stderr io.Writer, format string, args ...any) {
 	_, _ = fmt.Fprintf(stderr, format+"\n", args...)
-}
-
-// clearCaches drops every stage record so all stages re-run under --force.
-func clearCaches(r *runstore.Run) error {
-	return r.ResetStages()
-}
-
-// loadConfig loads the config; a missing default pipeline.yaml falls back to
-// built-in defaults, an explicitly named missing file is an error.
-func loadConfig(path string, workers int) (*cfg.Config, error) {
-	var conf *cfg.Config
-	if _, err := os.Stat(path); err != nil {
-		if path != "pipeline.yaml" {
-			return nil, fmt.Errorf("open %s: %w", path, err)
-		}
-		conf = cfg.Default()
-	} else {
-		var err error
-		if conf, err = cfg.Load(path); err != nil {
-			return nil, err
-		}
-	}
-	if workers > 0 {
-		conf.Apply(cfg.Overrides{Workers: &workers})
-	}
-	return conf, nil
 }
 
 func fail(stderr io.Writer, err error) int {
