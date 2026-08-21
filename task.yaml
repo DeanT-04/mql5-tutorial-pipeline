@@ -133,7 +133,7 @@ tasks:
   - id: T10
     title: verify stage
     depends_on: [T09]
-    status: pending
+    status: done
     deliverables:
       - internal/verify: static checks (brace/paren balance, #property strict,
         entry points per program type, placeholder/truncation artifacts, metadata extraction)
