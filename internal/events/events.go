@@ -14,7 +14,8 @@ import (
 
 const (
 	maxLineBytes = 1 << 20
-	maxFileBytes = 256 << 20
+	// MaxFileBytes caps any single events/triage JSONL file read into memory.
+	MaxFileBytes = 256 << 20
 )
 
 // Op is the kind of edit an event describes.

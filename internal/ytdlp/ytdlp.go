@@ -39,6 +39,10 @@ const (
 // ErrNoCaptions is returned when the video has no usable English captions.
 var ErrNoCaptions = errors.New("ytdlp: no english captions available")
 
+// maxStdoutBytes caps captured stdout (only small outputs such as
+// `yt-dlp --print title` are consumed via the Runner).
+const maxStdoutBytes = 1 << 20
+
 // maxStderrBytes caps captured stderr used in error messages.
 const maxStderrBytes = 8 << 10
 
@@ -56,7 +60,7 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 	// list built here; untrusted input (URLs) is never passed through a shell.
 	cmd := exec.CommandContext(ctx, name, args...)
 	var stdout, stderr limitedBuffer
-	stdout.max = maxStderrBytes
+	stdout.max = maxStdoutBytes
 	stderr.max = maxStderrBytes
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

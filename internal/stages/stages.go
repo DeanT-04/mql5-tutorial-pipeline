@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,6 +38,29 @@ func cached(r *runstore.Run, stage, inputHash, artifact string) bool {
 	return true
 }
 
+// decodeEvents parses JSONL data into events, ignoring failed-chunk markers
+// (they carry no replayable edit).
+func decodeEvents(data []byte) ([]events.Event, error) {
+	var evts []events.Event
+	err := events.Reader(bytes.NewReader(data), func(rec any) error {
+		if e, ok := rec.(events.Event); ok {
+			evts = append(evts, e)
+		}
+		return nil
+	})
+	return evts, err
+}
+
+// writeJSONL encodes every item as one JSONL line into w.
+func writeJSONL[T any](w io.Writer, items []T) error {
+	for _, item := range items {
+		if err := events.AppendJSONL(w, item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Fetch downloads the transcript for one video into its run directory.
 // Returns ytdlp.ErrNoCaptions (wrapped) when captions are unavailable.
 func Fetch(ctx context.Context, r *runstore.Run, rawURL string, mode ytdlp.Mode,
@@ -52,7 +76,8 @@ func Fetch(ctx context.Context, r *runstore.Run, rawURL string, mode ytdlp.Mode,
 	if cached(r, runstore.StageFetch, inputHash, runstore.TranscriptJSON) {
 		return -1, nil // -1 signals "skipped"
 	}
-	res, err := fetcherFactory().Fetch(ctx, rawURL, r.Dir(), mode)
+	fetcher := fetcherFactory()
+	res, err := fetcher.Fetch(ctx, rawURL, r.Dir(), mode)
 	if err != nil {
 		return 0, fmt.Errorf("fetch: %w", err)
 	}
@@ -63,7 +88,7 @@ func Fetch(ctx context.Context, r *runstore.Run, rawURL string, mode ytdlp.Mode,
 	if err := runstore.WriteFileAtomic(r.Path(runstore.TranscriptJSON), data); err != nil {
 		return 0, fmt.Errorf("fetch: %w", err)
 	}
-	title, _ := fetcherFactory().Title(ctx, rawURL)
+	title, _ := fetcher.Title(ctx, rawURL)
 	r.SetMeta(rawURL, title)
 	if err := r.MarkDone(runstore.StageFetch, inputHash); err != nil {
 		return 0, fmt.Errorf("fetch: %w", err)
@@ -130,20 +155,14 @@ func Extract(ctx context.Context, r *runstore.Run, cfg extract.Config,
 	}
 
 	var triageBuf, eventsBuf bytes.Buffer
-	for _, rec := range res.Triage {
-		if err := events.AppendJSONL(&triageBuf, rec); err != nil {
-			return nil, fmt.Errorf("extract: %w", err)
-		}
+	if err := writeJSONL(&triageBuf, res.Triage); err != nil {
+		return nil, fmt.Errorf("extract: %w", err)
 	}
-	for _, ev := range res.Events {
-		if err := events.AppendJSONL(&eventsBuf, ev); err != nil {
-			return nil, fmt.Errorf("extract: %w", err)
-		}
+	if err := writeJSONL(&eventsBuf, res.Events); err != nil {
+		return nil, fmt.Errorf("extract: %w", err)
 	}
-	for _, f := range res.Failed {
-		if err := events.AppendJSONL(&eventsBuf, f); err != nil {
-			return nil, fmt.Errorf("extract: %w", err)
-		}
+	if err := writeJSONL(&eventsBuf, res.Failed); err != nil {
+		return nil, fmt.Errorf("extract: %w", err)
 	}
 	if err := runstore.WriteFileAtomic(r.Path(runstore.TriageJSONL), triageBuf.Bytes()); err != nil {
 		return nil, fmt.Errorf("extract: %w", err)
@@ -159,7 +178,7 @@ func Extract(ctx context.Context, r *runstore.Run, cfg extract.Config,
 
 // Assemble replays events into out/*.mq5 plus assembly-report.json.
 func Assemble(r *runstore.Run) (*assemble.Result, string, error) {
-	data, err := r.ReadFileCapped(runstore.EventsJSONL, 256<<20)
+	data, err := r.ReadFileCapped(runstore.EventsJSONL, events.MaxFileBytes)
 	if err != nil {
 		return nil, "", fmt.Errorf("assemble: %w", err)
 	}
@@ -167,13 +186,8 @@ func Assemble(r *runstore.Run) (*assemble.Result, string, error) {
 	if cached(r, runstore.StageAssemble, inputHash, runstore.AssemblyReportJSON) {
 		return nil, "", nil
 	}
-	var evts []events.Event
-	if err := events.Reader(bytes.NewReader(data), func(rec any) error {
-		if e, ok := rec.(events.Event); ok {
-			evts = append(evts, e)
-		}
-		return nil
-	}); err != nil {
+	evts, err := decodeEvents(data)
+	if err != nil {
 		return nil, "", fmt.Errorf("assemble: %w", err)
 	}
 	res := assemble.Run(evts)
@@ -213,12 +227,11 @@ func Assemble(r *runstore.Run) (*assemble.Result, string, error) {
 
 // VerifyOptions parameterizes the verify stage.
 type VerifyOptions struct {
-	LLM        bool
-	Model      string
-	BaseURL    string
-	KeepAlive  string
-	NumCtx     int
-	MinConfide float64
+	LLM       bool
+	Model     string
+	BaseURL   string
+	KeepAlive string
+	NumCtx    int
 }
 
 // Verify runs static (and optionally LLM) checks and writes report.json.
@@ -240,17 +253,12 @@ func Verify(ctx context.Context, r *runstore.Run, opts VerifyOptions) (*verify.R
 	}
 	rep := verify.Run(files)
 	if opts.LLM {
-		data, err := r.ReadFileCapped(runstore.EventsJSONL, 256<<20)
+		data, err := r.ReadFileCapped(runstore.EventsJSONL, events.MaxFileBytes)
 		if err != nil {
 			return nil, fmt.Errorf("verify: load events: %w", err)
 		}
-		var evts []events.Event
-		if err := events.Reader(bytes.NewReader(data), func(rec any) error {
-			if e, ok := rec.(events.Event); ok {
-				evts = append(evts, e)
-			}
-			return nil
-		}); err != nil {
+		evts, err := decodeEvents(data)
+		if err != nil {
 			return nil, fmt.Errorf("verify: %w", err)
 		}
 		if err := verify.RunLLM(ctx, rep, files, evts, opts.Model, opts.BaseURL,
