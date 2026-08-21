@@ -95,7 +95,7 @@ tasks:
   - id: T07
     title: Prompts + event types
     depends_on: [T06]
-    status: pending
+    status: done
     deliverables:
       - internal/prompts: triage + deep-extract templates; byte-stable shared prefix
         (test asserts prefix equality across calls); few-shot examples included
