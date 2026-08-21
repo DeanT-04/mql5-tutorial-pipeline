@@ -83,7 +83,7 @@ tasks:
   - id: T06
     title: Ollama client
     depends_on: [T01]
-    status: pending
+    status: done
     deliverables:
       - internal/ollama: net/http client — chat endpoint, JSON-schema format param,
         temperature/num_ctx/num_predict options, keep-alive, timeouts,
