@@ -93,6 +93,11 @@ type triReply struct {
 	Confidence    float64 `json:"confidence"`
 }
 
+// deepReply is the schema-forced Pass-B reply envelope.
+type deepReply struct {
+	Events []events.Event `json:"events"`
+}
+
 // triage runs Pass A over all chunks concurrently and returns the verdicts
 // plus the ordered list of chunk IDs that continue to Pass B.
 func triage(ctx context.Context, chunks []segment.Chunk, cfg Config, cli Client) (verdicts map[string]TriageRecord, passed []string) {
@@ -179,15 +184,13 @@ func deepExtract(ctx context.Context, passed []string, chunks []segment.Chunk, c
 			o := outcome{id: id}
 			content := ""
 			for attempt := 0; attempt <= cfg.Retries; attempt++ {
-				var reply struct {
-					Events []events.Event `json:"events"`
-				}
+				var reply deepReply
 				err := cli.ChatJSON(ctx, req, &reply)
 				if err != nil {
 					content = err.Error()
 					continue // retry on any client/schema error
 				}
-				evts, verr := normalize(id, reply.Events)
+				evts, verr := events.Normalize(id, reply.Events)
 				if verr != nil {
 					content = verr.Error()
 					continue
@@ -213,21 +216,4 @@ func deepExtract(ctx context.Context, passed []string, chunks []segment.Chunk, c
 		evts = append(evts, o.evts...)
 	}
 	return evts, fails
-}
-
-// normalize re-anchors events to the authoritative chunk id, renumbers seq
-// in list order, and validates each event.
-func normalize(chunkID string, in []events.Event) ([]events.Event, error) {
-	out := make([]events.Event, 0, len(in))
-	for i, ev := range in {
-		ev.ChunkID = chunkID
-		if ev.Seq < 1 {
-			ev.Seq = i + 1
-		}
-		if err := ev.Validate(); err != nil {
-			return nil, err
-		}
-		out = append(out, ev)
-	}
-	return out, nil
 }

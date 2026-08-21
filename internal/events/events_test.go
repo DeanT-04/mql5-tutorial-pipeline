@@ -52,14 +52,14 @@ func TestValidateIncludeProperty(t *testing.T) {
 	}
 }
 
-func TestParseDeep(t *testing.T) {
-	content := `{"events":[
-		{"chunk_id":"WRONG","seq":0,"op":"create","file":"A.mq5","code":"// x"},
-		{"chunk_id":"WRONG","seq":9,"op":"append","file":"A.mq5","code":"int y;"}
-	]}`
-	got, err := ParseDeep("c0003", content)
+func TestNormalize(t *testing.T) {
+	in := []Event{
+		{ChunkID: "WRONG", Seq: 0, Op: OpCreate, File: "A.mq5", Code: "// x"},
+		{ChunkID: "WRONG", Seq: 9, Op: OpAppend, File: "A.mq5", Code: "int y;"},
+	}
+	got, err := Normalize("c0003", in)
 	if err != nil {
-		t.Fatalf("ParseDeep() error = %v", err)
+		t.Fatalf("Normalize() error = %v", err)
 	}
 	if got[0].ChunkID != "c0003" || got[0].Seq != 1 {
 		t.Errorf("first event = %+v, want re-anchored chunk c0003 seq 1", got[0])
@@ -69,27 +69,25 @@ func TestParseDeep(t *testing.T) {
 	}
 }
 
-func TestParseDeepErrors(t *testing.T) {
+func TestNormalizeErrors(t *testing.T) {
 	tests := []struct {
-		name    string
-		content string
+		name   string
+		events []Event
 	}{
-		{"not json", "{oops"},
-		{"trailing data", `{"events":[]} extra`},
-		{"invalid event", `{"events":[{"chunk_id":"x","seq":1,"op":"bogus","file":"A.mq5","code":"c"}]}`},
-		{"missing code", `{"events":[{"chunk_id":"x","seq":1,"op":"append","file":"A.mq5"}]}`},
+		{"invalid event", []Event{{Op: "bogus", File: "A.mq5", Code: "c"}}},
+		{"missing code", []Event{{Seq: 1, Op: OpAppend, File: "A.mq5"}}},
 	}
 	for _, tt := range tests {
-		if _, err := ParseDeep("c0001", tt.content); err == nil {
-			t.Errorf("%s: ParseDeep() error = nil, want error", tt.name)
+		if _, err := Normalize("c0001", tt.events); err == nil {
+			t.Errorf("%s: Normalize() error = nil, want error", tt.name)
 		}
 	}
 }
 
-func TestParseDeepEmptyEvents(t *testing.T) {
-	got, err := ParseDeep("c0001", `{"events":[]}`)
+func TestNormalizeEmptyEvents(t *testing.T) {
+	got, err := Normalize("c0001", nil)
 	if err != nil {
-		t.Fatalf("ParseDeep() error = %v", err)
+		t.Fatalf("Normalize() error = %v", err)
 	}
 	if len(got) != 0 {
 		t.Errorf("events = %+v, want empty", got)

@@ -91,24 +91,12 @@ func (e Event) Validate() error {
 	return nil
 }
 
-type deepReply struct {
-	Events []Event `json:"events"`
-}
-
-// ParseDeep decodes the model's {"events":[...]} reply and validates every
-// event, re-anchoring each to chunkID (the authoritative id) and renumbering
-// seq in list order if absent or non-monotonic.
-func ParseDeep(chunkID, content string) ([]Event, error) {
-	var reply deepReply
-	dec := json.NewDecoder(strings.NewReader(content))
-	if err := dec.Decode(&reply); err != nil {
-		return nil, fmt.Errorf("events: parse reply for %s: %w", chunkID, err)
-	}
-	if dec.More() {
-		return nil, fmt.Errorf("events: trailing data after JSON in reply for %s", chunkID)
-	}
-	out := make([]Event, 0, len(reply.Events))
-	for i, ev := range reply.Events {
+// Normalize re-anchors each event to chunkID (the authoritative id),
+// renumbers seq in list order when absent (< 1), and validates every event.
+// It is the single entry point for normalizing model-emitted event lists.
+func Normalize(chunkID string, in []Event) ([]Event, error) {
+	out := make([]Event, 0, len(in))
+	for i, ev := range in {
 		ev.ChunkID = chunkID
 		if ev.Seq < 1 {
 			ev.Seq = i + 1
