@@ -185,20 +185,6 @@ func HashBytes(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// HashFile returns the hex-encoded SHA-256 of the file at path.
-func HashFile(path string) (string, error) {
-	f, err := os.Open(path) // #nosec G304 -- paths come from the run directory by design
-	if err != nil {
-		return "", fmt.Errorf("runstore: open %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", fmt.Errorf("runstore: hash %s: %w", path, err)
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
 // HashValue returns the hex-encoded SHA-256 of the canonical JSON encoding of v.
 // Values that do not implement encoding.BinaryMarshaler are encoded with
 // encoding/json, which is deterministic for maps (sorted keys).

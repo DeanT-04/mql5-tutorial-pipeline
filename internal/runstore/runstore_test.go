@@ -156,24 +156,6 @@ func TestHashBytesDeterministic(t *testing.T) {
 	}
 }
 
-func TestHashFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "f.bin")
-	data := []byte("file content")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := HashFile(path)
-	if err != nil {
-		t.Fatalf("HashFile() error = %v", err)
-	}
-	if want := HashBytes(data); got != want {
-		t.Errorf("HashFile() = %q, want %q", got, want)
-	}
-	if _, err := HashFile(filepath.Join(t.TempDir(), "missing")); err == nil {
-		t.Error("HashFile(missing) error = nil, want error")
-	}
-}
-
 type binaryValue struct{}
 
 func (binaryValue) MarshalBinary() ([]byte, error) { return []byte("binary"), nil }

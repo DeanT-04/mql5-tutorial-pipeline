@@ -33,4 +33,5 @@ Stage CLIs: `go run ./cmd/{fetch,segment,extract,assemble,verify}` (see each `--
 
 ## Status
 
-Work in progress — see `task.yaml`. Tests pass with no Ollama running and no network.
+v1 complete (T01–T12 in `task.yaml`): all stages implemented, resumable end to end,
+validated on real videos. Tests pass with no Ollama running and no network.
